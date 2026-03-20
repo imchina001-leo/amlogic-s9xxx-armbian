@@ -218,6 +218,7 @@ on:
           - zcube1-max
           - zk-r39a
           - zysj
+          - x3399-9tripod
       armbian_kernel:
         description: "Select kernel version."
         required: false
