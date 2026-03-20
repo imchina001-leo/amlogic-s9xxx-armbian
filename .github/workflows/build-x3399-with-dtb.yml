@@ -32,9 +32,9 @@ jobs:
             libncurses5-dev libncursesw5-dev u-boot-tools \
             bc kmod cpio libssl-dev device-tree-compiler \
             bison flex gcc-aarch64-linux-gnu dosfstools \
-            mtools fakeroot parted udev rsync wget docker.io
+            mtools fakeroot parted udev rsync wget
 
-      - name: Prepare kernel source with custom DTS
+      - name: Prepare custom DTS
         run: |
           # 创建内核源码目录结构
           mkdir -p compile-kernel/kernel/arch/arm64/boot/dts/rockchip
@@ -42,43 +42,15 @@ jobs:
           # 复制自定义 dts 文件
           cp -v custom-dts/*.dts* compile-kernel/kernel/arch/arm64/boot/dts/rockchip/
           
-          # 创建 Makefile 条目
+          # 添加 Makefile 条目
           echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-9tripod-custom.dtb' >> compile-kernel/kernel/arch/arm64/boot/dts/rockchip/Makefile
           
-          # 创建内核配置目录
-          mkdir -p compile-kernel/tools/config
-          
-          # 显示复制结果
-          echo "Custom DTS files in place:"
+          echo "Custom DTS files prepared:"
           ls -la compile-kernel/kernel/arch/arm64/boot/dts/rockchip/
 
-      - name: Download kernel source (via recompile)
+      - name: Build with rebuild
         run: |
-          # 运行 recompile，让它下载内核源码到 compile-kernel/kernel
-          # 使用 -n 参数只下载不编译？但脚本可能不支持，所以先尝试直接运行
-          ./recompile -k ${{ github.event.inputs.kernel_version }} -m rk3399 -d
-        continue-on-error: true
-
-      - name: Verify and inject DTS again
-        run: |
-          # 确保 DTS 文件在正确位置（recompile 可能覆盖了目录）
-          DTS_DIR="compile-kernel/kernel/arch/arm64/boot/dts/rockchip"
-          if [ -d "$DTS_DIR" ]; then
-            cp -v custom-dts/*.dts* "$DTS_DIR/"
-            echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-9tripod-custom.dtb' >> "$DTS_DIR/Makefile"
-            echo "DTS files re-injected successfully"
-          else
-            echo "Warning: Kernel source directory not found"
-          fi
-
-      - name: Compile kernel
-        run: |
-          # 编译内核
-          ./recompile -k ${{ github.event.inputs.kernel_version }} -m rk3399
-
-      - name: Rebuild Armbian image
-        run: |
-          # 打包固件
+          # rebuild 会自动处理内核下载和编译（Docker 已预装）
           ./rebuild -b x3399-9tripod -k ${{ github.event.inputs.kernel_version }}
 
       - name: Upload artifacts
@@ -88,5 +60,4 @@ jobs:
           path: |
             build/output/images/*.img
             build/output/images/*.img.gz
-            compile-kernel/output/*.dtb
           if-no-files-found: warn
