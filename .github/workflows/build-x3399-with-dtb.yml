@@ -50,8 +50,8 @@ jobs:
 
       - name: Build with rebuild
         run: |
-          # rebuild 会自动处理内核下载和编译（Docker 已预装）
-          ./rebuild -b x3399-9tripod -k ${{ github.event.inputs.kernel_version }}
+          # 使用 sudo 以 root 权限运行
+          sudo ./rebuild -b x3399-9tripod -k ${{ github.event.inputs.kernel_version }}
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
