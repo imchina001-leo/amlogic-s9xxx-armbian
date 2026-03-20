@@ -34,28 +34,54 @@ jobs:
             bison flex gcc-aarch64-linux-gnu dosfstools \
             mtools fakeroot parted udev rsync wget
 
-      - name: Download kernel source
+      - name: Download and compile kernel with custom DTS
         run: |
+          # 直接使用 recompile 编译，让脚本自己处理下载和编译
+          # -k 指定内核版本，-m 指定 SOC 型号，-v 显示详细信息
           sudo ./recompile -k ${{ github.event.inputs.kernel_version }} \
                            -m rk3399 \
-                           -n
+                           -v true
+        env:
+          # 设置环境变量，让 recompile 知道内核源码位置
+          KERNEL_SOURCE_PATH: compile-kernel/kernel
 
-      - name: Inject custom DTS files
+      - name: Inject custom DTS files after kernel download
         run: |
+          # 等待内核源码下载完成
+          sleep 5
+          
+          # 检查内核源码目录
           KERNEL_DIR="compile-kernel/kernel"
+          if [ ! -d "$KERNEL_DIR" ]; then
+            echo "Error: Kernel source directory not found"
+            exit 1
+          fi
+          
           DTS_DIR="$KERNEL_DIR/arch/arm64/boot/dts/rockchip"
           mkdir -p "$DTS_DIR"
-          cp custom-dts/*.dts* "$DTS_DIR/"
+          
+          # 复制自定义 dts 文件
+          if [ -d "custom-dts" ]; then
+            cp -v custom-dts/*.dts* "$DTS_DIR/"
+          else
+            echo "Warning: custom-dts directory not found"
+          fi
+          
+          # 添加到 Makefile
           echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-9tripod-custom.dtb' >> "$DTS_DIR/Makefile"
-          echo "Injected files:"
-          ls -la "$DTS_DIR" | grep -E "rk3399|lcd"
+          
+          echo "Custom DTS files injected to: $DTS_DIR"
+          ls -la "$DTS_DIR" | grep -E "rk3399|9tripod|lcd"
 
-      - name: Compile kernel and dtb
+      - name: Recompile kernel with custom DTS
         run: |
+          # 重新编译内核（使用已有的源码目录）
           sudo ./recompile -k ${{ github.event.inputs.kernel_version }} \
                            -m rk3399 \
                            -s \
                            -v true
+        env:
+          KERNEL_SOURCE_PATH: compile-kernel/kernel
 
       - name: Rebuild Armbian image
         run: |
