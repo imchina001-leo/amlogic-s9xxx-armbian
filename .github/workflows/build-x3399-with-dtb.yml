@@ -1,4 +1,4 @@
-name: Build X3399 with Existing DTB
+name: Build X3399 Custom Armbian
 
 on:
   workflow_dispatch:
@@ -34,70 +34,41 @@ jobs:
             bison flex gcc-aarch64-linux-gnu dosfstools \
             mtools fakeroot parted udev rsync wget
 
-      - name: Download base Armbian image from Releases
-        id: download_base
+      - name: Download kernel source
         run: |
-          # 查询最新的基础镜像
-          BASE_IMAGE=$(curl -s \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-            https://api.github.com/repos/${{ github.repository }}/releases?per_page=5 | \
-            jq -r '.[] | .assets[] | select(.name | test("Armbian_.*_trunk_.*\.img\.gz")) | .browser_download_url' | \
-            head -1)
-          
-          if [ -z "$BASE_IMAGE" ]; then
-            echo "Error: No base Armbian image found in Releases"
-            exit 1
-          fi
-          
-          echo "Downloading base image: $BASE_IMAGE"
-          mkdir -p build/output/images
-          wget -O build/output/images/base.img.gz "$BASE_IMAGE"
-          cd build/output/images && gunzip base.img.gz && mv base.img Armbian_base.img
-          echo "status=success" >> $GITHUB_OUTPUT
+          sudo ./recompile -k ${{ github.event.inputs.kernel_version }} \
+                           -m rk3399 \
+                           -n
 
-      - name: Prepare custom DTB
+      - name: Inject custom DTS files
         run: |
-          # 创建 boot 目录结构
-          mkdir -p boot_temp/dtb/rockchip
-          
-          # 复制你的 dtb 文件（如果 custom-dts 中有，或者指定位置）
-          if [ -f "custom-dts/rk3399-9tripod-custom.dtb" ]; then
-            cp custom-dts/rk3399-9tripod-custom.dtb boot_temp/dtb/rockchip/
-          else
-            # 如果 dtb 不在 custom-dts 中，尝试其他位置
-            find . -name "rk3399-9tripod-custom.dtb" -exec cp {} boot_temp/dtb/rockchip/ \;
-          fi
-          
-          # 创建 extlinux 配置文件
-          mkdir -p boot_temp/extlinux
-          cat > boot_temp/extlinux/extlinux.conf << 'EOF'
-          LABEL Armbian
-          LINUX /Image
-          FDT /dtb/rockchip/rk3399-9tripod-custom.dtb
-          APPEND root=PARTUUID=614e0000-0000-4d53-8000-1b280001234b rw rootwait console=ttyS2,115200n8 console=tty0
-          EOF
+          KERNEL_DIR="compile-kernel/kernel"
+          DTS_DIR="$KERNEL_DIR/arch/arm64/boot/dts/rockchip"
+          mkdir -p "$DTS_DIR"
+          cp custom-dts/*.dts* "$DTS_DIR/"
+          echo 'dtb-$(CONFIG_ARCH_ROCKCHIP) += rk3399-9tripod-custom.dtb' >> "$DTS_DIR/Makefile"
+          echo "Injected files:"
+          ls -la "$DTS_DIR" | grep -E "rk3399|lcd"
 
-      - name: Rebuild Armbian image with custom DTB
-        uses: ophub/amlogic-s9xxx-armbian@main
-        with:
-          build_target: armbian
-          armbian_path: build/output/images/Armbian_base.img
-          armbian_board: x3399-9tripod
-          armbian_kernel: ${{ github.event.inputs.kernel_version }}
-          auto_kernel: true
-          kernel_repo: ophub/kernel
-          kernel_usage: stable
-          armbian_fstype: ext4
-          builder_name: imchina001-leo
-          # 添加自定义文件（将你的 dtb 复制到正确位置）
-          armbian_files: boot_temp/
+      - name: Compile kernel and dtb
+        run: |
+          sudo ./recompile -k ${{ github.event.inputs.kernel_version }} \
+                           -m rk3399 \
+                           -s \
+                           -v true
+
+      - name: Rebuild Armbian image
+        run: |
+          sudo ./rebuild -b x3399-9tripod \
+                         -k ${{ github.event.inputs.kernel_version }} \
+                         -v true
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: x3399-armbian-with-dtb
+          name: x3399-armbian-image-${{ github.run_id }}
           path: |
             build/output/images/*.img
             build/output/images/*.img.gz
+            compile-kernel/output/*.dtb
           if-no-files-found: warn
