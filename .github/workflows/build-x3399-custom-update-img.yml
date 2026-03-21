@@ -1,6 +1,6 @@
 #========================================================
 # Build Armbian for RK3399 9tripod (x3399)
-# FULL VERSION - STABLE
+# FINAL FIXED VERSION (PATH CORRECTED)
 #========================================================
 
 name: Build x3399-9tripod Armbian IMG
@@ -11,18 +11,19 @@ on:
 jobs:
   build:
     runs-on: ubuntu-22.04
+    timeout-minutes: 360
 
     steps:
     #--------------------------------------------------
-    # 1. Checkout your repo
+    # 1. Checkout 当前仓库
     #--------------------------------------------------
     - name: Checkout source
       uses: actions/checkout@v4
 
     #--------------------------------------------------
-    # 2. System prepare (提高成功率关键)
+    # 2. 安装依赖（稳定编译关键）
     #--------------------------------------------------
-    - name: Prepare system
+    - name: Install dependencies
       run: |
         sudo apt update
         sudo apt install -y \
@@ -41,42 +42,45 @@ jobs:
           rsync
 
     #--------------------------------------------------
-    # 3. Clone ophub build system
+    # 3. 克隆 ophub 官方仓库
     #--------------------------------------------------
     - name: Clone ophub repo
       run: |
         git clone https://github.com/ophub/amlogic-s9xxx-armbian.git build
 
     #--------------------------------------------------
-    # 4. Inject model_database.conf
+    # 4. 注入 model_database.conf（已修复路径）
     #--------------------------------------------------
     - name: Inject model_database.conf
       run: |
-        cp -f amlogic-s9xxx-armbian/build-armbian/armbian-files/common-files/etc/model_database.conf \
+        echo "Copy model_database.conf..."
+
+        cp -f build-armbian/armbian-files/common-files/etc/model_database.conf \
         build/build-armbian/armbian-files/common-files/etc/model_database.conf
 
     #--------------------------------------------------
-    # 5. Inject custom DTS
+    # 5. 注入 custom DTS
     #--------------------------------------------------
     - name: Inject custom DTS
       run: |
+        echo "Copy custom DTS..."
+
         mkdir -p build/custom-dts
-        cp -rf amlogic-s9xxx-armbian/custom-dts/* build/custom-dts/
+        cp -rf custom-dts/* build/custom-dts/
 
     #--------------------------------------------------
-    # 6. Pre-config (关键稳定性)
+    # 6. 编译前优化（成功率关键）
     #--------------------------------------------------
     - name: Pre-config
       run: |
         cd build
 
-        # 提高编译稳定性
         echo "FORCE_UNSAFE_CONFIGURE=1" >> userpatches/config-default.conf
         echo "EXPERT=yes" >> userpatches/config-default.conf
         echo "USE_CCACHE=no" >> userpatches/config-default.conf
 
     #--------------------------------------------------
-    # 7. Build Armbian (RK3399)
+    # 7. 编译 Armbian（RK3399）
     #--------------------------------------------------
     - name: Build Armbian
       run: |
@@ -95,9 +99,9 @@ jobs:
           COMPRESS_OUTPUTIMAGE=sha,img
 
     #--------------------------------------------------
-    # 8. Replace DTB/DTS into image
+    # 8. 注入 DTS 到镜像（关键）
     #--------------------------------------------------
-    - name: Replace DTS
+    - name: Replace DTS in IMG
       run: |
         cd build/output/images
 
@@ -107,18 +111,19 @@ jobs:
           mkdir -p tmp
           sudo mount -o loop $img tmp
 
-          # 复制你的 DTS（覆盖）
+          # 覆盖 dtb
           if [ -f ../../custom-dts/rk3399-9tripod-custom.dts ]; then
             sudo cp ../../custom-dts/rk3399-9tripod-custom.dts \
             tmp/boot/dtb/rockchip/rk3399-9tripod.dts
           fi
 
+          sync
           sudo umount tmp
           rm -rf tmp
         done
 
     #--------------------------------------------------
-    # 9. Compress image (方便下载)
+    # 9. 压缩镜像
     #--------------------------------------------------
     - name: Compress IMG
       run: |
@@ -128,7 +133,7 @@ jobs:
         done
 
     #--------------------------------------------------
-    # 10. Upload artifact
+    # 10. 上传结果
     #--------------------------------------------------
     - name: Upload firmware
       uses: actions/upload-artifact@v4
