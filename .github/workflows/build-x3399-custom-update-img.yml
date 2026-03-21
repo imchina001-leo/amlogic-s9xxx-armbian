@@ -1,9 +1,8 @@
 #==========================================================================
-# Description: Build Armbian arm64 with custom DTS and package to update.img
-# For x3399-9tripod custom device
+# Description: Build Armbian arm64 with custom DTS for x3399-9tripod
 #==========================================================================
 
-name: Build x3399 Custom Update IMG
+name: Build x3399 Custom Armbian IMG
 
 on:
   repository_dispatch:
@@ -46,7 +45,6 @@ on:
 
 env:
   TZ: Etc/UTC
-  ROOTFS_SCRIPT: compile-kernel/tools/script/docker/build_armbian_rootfs_file.sh
   CUSTOM_DTS_PATH: custom-dts
   MODEL_DB_PATH: build-armbian/armbian-files/common-files/etc/model_database.conf
 
@@ -59,7 +57,7 @@ jobs:
 
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -89,10 +87,14 @@ jobs:
 
       - name: Create extended storage
         id: storage
+        if: ${{ steps.init.outputs.status == 'success' }}
         run: |
-          mnt_size=$(expr $(df -h /mnt | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 1)
-          root_size=$(expr $(df -h / | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/\..*//') - 4)
-          [[ -z "$mnt_size" ]] || [[ -z "$root_size" ]] && { echo "Failed to calculate sizes"; exit 1; }
+          mnt_size=$(expr $(df -h /mnt | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/..*//') - 1)
+          root_size=$(expr $(df -h / | tail -1 | awk '{print $4}' | sed 's/[[:alpha:]]//g' | sed 's/..*//') - 4)
+          if [[ -z "$mnt_size" || -z "$root_size" ]]; then
+            echo "Failed to calculate sizes"
+            exit 1
+          fi
           sudo truncate -s "${mnt_size}"G /mnt/mnt.img
           sudo truncate -s "${root_size}"G /root.img
           sudo losetup /dev/loop6 /mnt/mnt.img
@@ -111,7 +113,7 @@ jobs:
       - name: Download Armbian source
         id: download
         working-directory: /builder
-        if: ${{ steps.init.outputs.status == 'success' }}
+        if: ${{ steps.storage.outputs.status == 'success' }}
         run: |
           git clone -q --single-branch --depth=1 --branch=main https://github.com/armbian/build.git build
           ln -sf /builder/build ${{ github.workspace }}/build
@@ -121,259 +123,42 @@ jobs:
         id: prepare
         if: ${{ steps.download.outputs.status == 'success' }}
         run: |
-          # 创建自定义 DTS 目录结构
           mkdir -p /builder/build/arch/arm64/boot/dts/rockchip/custom
-          
-          # 复制自定义 DTS 文件
           echo "Copying custom DTS files..."
           cp -v ${GITHUB_WORKSPACE}/${CUSTOM_DTS_PATH}/*.dts* /builder/build/arch/arm64/boot/dts/rockchip/custom/ 2>/dev/null || true
-          
-          # 备份并替换 model_database.conf
+
           echo "Updating model_database.conf..."
           if [[ -f "${GITHUB_WORKSPACE}/${MODEL_DB_PATH}" ]]; then
-            cp -v "${GITHUB_WORKSPACE}/${MODEL_DB_PATH}" /builder/build/build-armbian/armbian-files/common-files/etc/
+            mkdir -p /builder/build/build-armbian/armbian-files/common-files/etc
+            cp -v "${GITHUB_WORKSPACE}/${MODEL_DB_PATH}" /builder/build/build-armbian/armbian-files/common-files/etc/model_database.conf
             echo "✓ model_database.conf updated"
+          else
+            echo "model_database.conf not found (skip)"
           fi
-          
-          # 列出已复制的文件
+
           ls -lh /builder/build/arch/arm64/boot/dts/rockchip/custom/ || echo "No custom DTS files"
           echo "status=success" >> ${GITHUB_OUTPUT}
 
-      - name: Compile Armbian [ ${{ inputs.set_release }} ]
-        id: compile
-        working-directory: /builder/build
+      - name: Build Armbian image (rebuild)
+        id: rebuild
         if: ${{ steps.prepare.outputs.status == 'success' }}
+        working-directory: ${{ github.workspace }}
         run: |
-          docker run --rm --privileged multiarch/qemu-user-static --reset -p yes 2>/dev/null || true
-          
-          # 编译 Armbian
-          ./compile.sh \
-            RELEASE=${{ inputs.set_release }} \
-            BOARD=x3399-9tripod \
-            BRANCH=current \
-            BUILD_MINIMAL=no \
-            BUILD_ONLY=default \
-            HOST=armbian \
-            BUILD_DESKTOP=no \
-            EXPERT=yes \
-            KERNEL_CONFIGURE=no \
-            COMPRESS_OUTPUTIMAGE="sha" \
-            SHARE_LOG=yes
-          
-          if [[ ! -f "output/images/"*".img.gz" ]]; then
-            echo "❌ Compilation failed: no img.gz found"
-            exit 1
-          fi
-          
-          echo "✓ Armbian compiled successfully"
+          chmod +x ./rebuild
+          ./rebuild \
+            -b rk3399 \
+            -r ${{ inputs.set_release }} \
+            -k ${{ inputs.armbian_kernel }} \
+            -u ${{ inputs.kernel_usage }} \
+            -t ${{ inputs.armbian_fstype }}
           echo "status=success" >> ${GITHUB_OUTPUT}
 
-      - name: Extract and prepare rootfs
-        id: rootfs
-        if: ${{ steps.compile.outputs.status == 'success' }}
-        run: |
-          chmod +x ${ROOTFS_SCRIPT}
-          ${ROOTFS_SCRIPT} -v ${{ inputs.set_release }} -s true -c true -k true -p arm64
-          
-          if [[ ! -d "build/output/images/Armbian_rootfs" ]]; then
-            echo "❌ Rootfs extraction failed"
-            exit 1
-          fi
-          
-          echo "status=success" >> ${GITHUB_OUTPUT}
-
-      - name: Create update.img (线刷固件)
-        id: create_update_img
-        if: ${{ steps.rootfs.outputs.status == 'success' }}
-        run: |
-          set -e
-          
-          BUILD_DATE=$(date +"%Y%m%d_%H%M%S")
-          DEVICE_NAME="x3399-9tripod"
-          UPDATE_IMG_NAME="Armbian_${DEVICE_NAME}_${{ inputs.set_release }}_${BUILD_DATE}.img"
-          
-          # 临时工作目录
-          WORK_DIR="/tmp/update_img_build"
-          mkdir -p ${WORK_DIR}
-          cd ${WORK_DIR}
-          
-          # 获取 rootfs 信息
-          ROOTFS_PATH="$(ls -d ${{ github.workspace }}/build/output/images/Armbian_rootfs 2>/dev/null | head -1)"
-          if [[ -z "$ROOTFS_PATH" ]]; then
-            echo "❌ Rootfs path not found"
-            exit 1
-          fi
-          
-          # 获取最大的 img.gz 文件作为基础
-          IMG_GZ=$(find ${{ github.workspace }}/build/output/images -maxdepth 1 -name "*.img.gz" -type f -exec ls -lS {} \; | head -1 | awk '{print $NF}')
-          if [[ -z "$IMG_GZ" ]]; then
-            echo "❌ No img.gz found"
-            exit 1
-          fi
-          
-          echo "Using base image: $IMG_GZ"
-          
-          # 解压基础镜像
-          mkdir -p mount_point
-          gunzip -c "$IMG_GZ" > base.img
-          
-          # 计算镜像大小 (rootfs + 额外空间)
-          ROOTFS_SIZE=$(du -sb "$ROOTFS_PATH" | awk '{print $1}')
-          IMG_SIZE=$((ROOTFS_SIZE + 500*1024*1024))  # 加 500MB 缓冲
-          
-          # 创建新镜像
-          dd if=/dev/zero of=update.img bs=1 count=0 seek=$IMG_SIZE 2>/dev/null
-          
-          # 格式化为 ext4
-          mkfs.ext4 -F -L ARMBIAN update.img
-          
-          # 挂载并复制 rootfs
-          mkdir -p mount_new
-          sudo mount -o loop update.img mount_new
-          
-          echo "Copying rootfs to update.img..."
-          sudo cp -r "$ROOTFS_PATH"/* mount_new/ 2>/dev/null || sudo cp -r "$ROOTFS_PATH"/. mount_new/ 2>/dev/null
-          
-          # 同步并卸载
-          sudo sync
-          sudo umount mount_new
-          
-          # 压缩镜像
-          echo "Compressing update.img..."
-          gzip -9 update.img
-          UPDATE_IMG_GZ="${UPDATE_IMG_NAME}.gz"
-          mv update.img.gz "${{ github.workspace }}/${UPDATE_IMG_GZ}"
-          
-          # 生成校验和
-          sha256sum "${{ github.workspace }}/${UPDATE_IMG_GZ}" | tee "${{ github.workspace }}/${UPDATE_IMG_GZ}.sha256"
-          
-          cd ${{ github.workspace }}
-          rm -rf ${WORK_DIR}
-          
-          echo "UPDATE_IMG_GZ=${UPDATE_IMG_GZ}" >> ${GITHUB_ENV}
-          echo "UPDATE_IMG_SHA=${UPDATE_IMG_GZ}.sha256" >> ${GITHUB_ENV}
-          echo "BUILD_DATE=${BUILD_DATE}" >> ${GITHUB_ENV}
-          echo "✓ update.img created successfully"
-          echo "status=success" >> ${GITHUB_OUTPUT}
-
-      - name: Cleanup build artifacts
-        id: cleanup
-        if: ${{ steps.compile.outputs.status == 'success' }}
-        run: |
-          cd /builder/build
-          rm -rf $(ls . | grep -v "^output$" | xargs) 2>/dev/null
-          df -hT ${PWD}
-          echo "status=success" >> ${GITHUB_OUTPUT}
-
-      - name: Generate release notes
-        id: release_notes
-        run: |
-          cat > release_notes.md << 'EOF'
-          # Armbian x3399-9tripod Custom Build
-          
-          ## Build Information
-          - **Device**: x3399-9tripod (RK3399)
-          - **Release**: ${{ inputs.set_release }}
-          - **Kernel**: ${{ inputs.armbian_kernel }}
-          - **Build Date**: ${{ env.BUILD_DATE }}
-          - **Filesystem**: ${{ inputs.armbian_fstype }}
-          
-          ## Features
-          - ✅ Custom DTS support for x3399-9tripod
-          - ✅ LCD MIPI display support (1024x600)
-          - ✅ Optimized for custom hardware configuration
-          - ✅ Ready for USB flashing
-          
-          ## Installation Guide
-          
-          ### Method 1: USB Flashing (推荐)
-          ```bash
-          # 1. 解压固件
-          gunzip Armbian_x3399-9tripod_*.img.gz
-          
-          # 2. 查找 USB 设备
-          lsblk
-          
-          # 3. 写入固件 (替换 sdX 为实际设备)
-          sudo dd if=Armbian_x3399-9tripod_*.img of=/dev/sdX bs=4M status=progress
-          sudo sync
-          ```
-          
-          ### Method 2: Android Flash Tool
-          - 使用 Android Flash Tool (如 Rockchip DevTool)
-          - 选择此 .img 文件进行线刷
-          
-          ## Default Credentials
-          - **Username**: `root`
-          - **Password**: `1234`
-          
-          ## First Boot
-          ```bash
-          # 调整分区大小以使用全部存储空间
-          armbian-install
-          
-          # 更新系统
-          apt update && apt upgrade -y
-          ```
-          
-          ## System Info
-          - CPU: RK3399 (ARM64)
-          - RAM: 2GB/4GB DDR3
-          - Storage: 16GB eMMC
-          - Network: 1Gb Ethernet
-          
-          ## Supported Filesystems
-          - ext4 (default)
-          - btrfs
-          
-          ## Custom Configuration
-          - Model database: Updated with x3399-9tripod entries
-          - Custom DTS: Included in device tree
-          - LCD driver: MIPI 1024x600 (WY070ML) support
-          
-          ---
-          
-          **Checksum**: See attached .sha256 file for verification
-          
-          **Flash with**: 
-          - Rockchip Flash Tool
-          - balena Etcher
-          - Raspberry Pi Imager
-          - `dd` command
-          EOF
-          
-          cat release_notes.md
-          echo "status=success" >> ${GITHUB_OUTPUT}
-
-      - name: Upload to GitHub Release
-        uses: ncipollo/release-action@main
-        if: ${{ steps.create_update_img.outputs.status == 'success' }}
+      - name: Upload Armbian image
+        if: ${{ steps.rebuild.outputs.status == 'success' }}
+        uses: actions/upload-artifact@v4
         with:
-          tag: Armbian_x3399-9tripod_${{ inputs.set_release }}_${{ env.BUILD_DATE }}
-          artifacts: |
-            ${{ env.UPDATE_IMG_GZ }}
-            ${{ env.UPDATE_IMG_SHA }}
-            release_notes.md
-          allowUpdates: true
-          makeLatest: true
-          removeArtifacts: false
-          token: ${{ secrets.GITHUB_TOKEN }}
-          bodyFile: release_notes.md
-
-      - name: Generate build summary
-        if: ${{ always() }}
-        run: |
-          echo "## 📦 Build Summary" >> ${GITHUB_STEP_SUMMARY}
-          echo "" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Item | Status |" >> ${GITHUB_STEP_SUMMARY}
-          echo "|------|--------|" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Initialization | ${{ steps.init.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Storage Setup | ${{ steps.storage.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Source Download | ${{ steps.download.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Custom Files | ${{ steps.prepare.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Compilation | ${{ steps.compile.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Rootfs Extract | ${{ steps.rootfs.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Update IMG | ${{ steps.create_update_img.outputs.status }} |" >> ${GITHUB_STEP_SUMMARY}
-          echo "| Release | $([ '${{ steps.create_update_img.outputs.status }}' = 'success' ] && echo 'success' || echo 'skipped') |" >> ${GITHUB_STEP_SUMMARY}
-          echo "" >> ${GITHUB_STEP_SUMMARY}
-          [[ -f "${{ env.UPDATE_IMG_GZ }}" ]] && echo "✅ **Output**: \`${{ env.UPDATE_IMG_GZ }}\`" >> ${GITHUB_STEP_SUMMARY}
+          name: x3399-9tripod-armbian-img
+          path: |
+            build/output/images/*.img
+            build/output/images/*.zip
+          if-no-files-found: error
