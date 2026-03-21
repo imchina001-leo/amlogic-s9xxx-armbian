@@ -1,6 +1,6 @@
 #========================================================
 # Build Armbian for RK3399 9tripod (x3399)
-# FINAL FIXED VERSION (PATH CORRECTED)
+# FINAL STABLE VERSION (ALL FIXED)
 #========================================================
 
 name: Build x3399-9tripod Armbian IMG
@@ -21,7 +21,7 @@ jobs:
       uses: actions/checkout@v4
 
     #--------------------------------------------------
-    # 2. 安装依赖（稳定编译关键）
+    # 2. 安装依赖
     #--------------------------------------------------
     - name: Install dependencies
       run: |
@@ -42,14 +42,23 @@ jobs:
           rsync
 
     #--------------------------------------------------
-    # 3. 克隆 ophub 官方仓库
+    # 3. 设置环境变量（替代 userpatches）
+    #--------------------------------------------------
+    - name: Set build env
+      run: |
+        echo "FORCE_UNSAFE_CONFIGURE=1" >> $GITHUB_ENV
+        echo "EXPERT=yes" >> $GITHUB_ENV
+        echo "USE_CCACHE=no" >> $GITHUB_ENV
+
+    #--------------------------------------------------
+    # 4. 克隆 ophub 仓库
     #--------------------------------------------------
     - name: Clone ophub repo
       run: |
         git clone https://github.com/ophub/amlogic-s9xxx-armbian.git build
 
     #--------------------------------------------------
-    # 4. 注入 model_database.conf（已修复路径）
+    # 5. 注入 model_database.conf（你的路径）
     #--------------------------------------------------
     - name: Inject model_database.conf
       run: |
@@ -59,7 +68,7 @@ jobs:
         build/build-armbian/armbian-files/common-files/etc/model_database.conf
 
     #--------------------------------------------------
-    # 5. 注入 custom DTS
+    # 6. 注入 custom DTS
     #--------------------------------------------------
     - name: Inject custom DTS
       run: |
@@ -67,17 +76,6 @@ jobs:
 
         mkdir -p build/custom-dts
         cp -rf custom-dts/* build/custom-dts/
-
-    #--------------------------------------------------
-    # 6. 编译前优化（成功率关键）
-    #--------------------------------------------------
-    - name: Pre-config
-      run: |
-        cd build
-
-        echo "FORCE_UNSAFE_CONFIGURE=1" >> userpatches/config-default.conf
-        echo "EXPERT=yes" >> userpatches/config-default.conf
-        echo "USE_CCACHE=no" >> userpatches/config-default.conf
 
     #--------------------------------------------------
     # 7. 编译 Armbian（RK3399）
@@ -99,7 +97,7 @@ jobs:
           COMPRESS_OUTPUTIMAGE=sha,img
 
     #--------------------------------------------------
-    # 8. 注入 DTS 到镜像（关键）
+    # 8. 替换 DTS 到镜像
     #--------------------------------------------------
     - name: Replace DTS in IMG
       run: |
@@ -111,7 +109,6 @@ jobs:
           mkdir -p tmp
           sudo mount -o loop $img tmp
 
-          # 覆盖 dtb
           if [ -f ../../custom-dts/rk3399-9tripod-custom.dts ]; then
             sudo cp ../../custom-dts/rk3399-9tripod-custom.dts \
             tmp/boot/dtb/rockchip/rk3399-9tripod.dts
