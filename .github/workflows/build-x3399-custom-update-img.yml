@@ -144,8 +144,8 @@ jobs:
         if: ${{ steps.prepare.outputs.status == 'success' }}
         working-directory: ${{ github.workspace }}
         run: |
-          chmod +x ./rebuild
-          ./rebuild \
+          sudo chmod +x ./rebuild
+          sudo ./rebuild \
             -b rk3399 \
             -r ${{ inputs.set_release }} \
             -k ${{ inputs.armbian_kernel }} \
