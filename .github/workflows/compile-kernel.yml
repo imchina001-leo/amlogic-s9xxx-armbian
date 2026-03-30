@@ -13,11 +13,12 @@ on:
       kernel_source:
         description: "Select the kernel source"
         required: false
-        default: "unifreq"
+        default: "imchina001-leo"
         type: choice
         options:
           - unifreq
           - ophub
+          - imchina001-leo
       kernel_version:
         description: "Select kernel version"
         required: false
