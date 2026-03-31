@@ -13,12 +13,12 @@ on:
       kernel_source:
         description: "Select the kernel source"
         required: false
-        default: "imchina001-leo"
+        default: "imchina001-leo/linux-6.1.y@6.1.y"
         type: choice
         options:
-          - unifreq
-          - ophub
-          - imchina001-leo
+          - unifreq/linux-6.1.y@6.1.y
+          - ophub/linux-6.1.y@6.1.y
+          - imchina001-leo/linux-6.1.y@6.1.y
       kernel_version:
         description: "Select kernel version"
         required: false
