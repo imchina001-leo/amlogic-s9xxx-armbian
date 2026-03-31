@@ -120,7 +120,7 @@ jobs:
 
       - name: Create swap space
         run: |
-          sudo fallocate -l 8G /swapfile
+          sudo fallocate -l 16G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
@@ -210,7 +210,7 @@ jobs:
         uses: ophub/amlogic-s9xxx-armbian@main
         if: ${{ steps.disk.outputs.status == 'success' && !cancelled() }}
         env:
-          MAKE_JOBS: 2
+          MAKE_JOBS: 1
         with:
           build_target: kernel
           kernel_source: ${{ inputs.kernel_source }}
@@ -222,7 +222,7 @@ jobs:
           kernel_toolchain: ${{ inputs.kernel_toolchain }}
           ccache_clear: ${{ inputs.ccache_clear }}
           docker_hostpath: /builder
-          docker_image: ophub/armbian-${{ inputs.docker_image }}:arm64
+          docker_image: ophub/armbian-bookworm:arm64
           silent_log: false
           enable_log: true
 
