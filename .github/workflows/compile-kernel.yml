@@ -1,7 +1,7 @@
 #==========================================================================
-# Description: Compile the kernel
-# Copyright (C) 2021 https://github.com/unifreq/openwrt_packit
-# Copyright (C) 2021 https://github.com/ophub/amlogic-s9xxx-armbian
+# Description: Compile the kernel for imchina001-leo/linux-6.1.y
+# https://github.com/imchina001-leo/linux-6.1.y branch: 6.1.y
+# Forked from Unifreq/ophub example
 #==========================================================================
 
 name: Compile the kernel
@@ -11,22 +11,19 @@ on:
   workflow_dispatch:
     inputs:
       kernel_source:
-        description: "Select the kernel source (格式: owner/repo@branch)"
+        description: "Select the kernel source"
         required: false
-        default: "imchina001-leo/linux-6.1.y@6.1.y"
-        type: string
+        default: "imchina001-leo"
+        type: choice
+        options:
+          - imchina001-leo
       kernel_version:
         description: "Select kernel version"
         required: false
         default: "6.1.y"
         type: choice
         options:
-          - 5.10.y
-          - 5.15.y
           - 6.1.y
-          - 6.6.y
-          - 6.12.y
-          - 6.18.y
       kernel_auto:
         description: "Auto use the latest kernel"
         required: false
@@ -74,7 +71,7 @@ on:
       kernel_sign:
         description: "Set the kernel custom signature"
         required: false
-        default: "-yourname"
+        default: "-ophub"
         type: choice
         options:
           - -ophub
@@ -85,7 +82,7 @@ env:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-24.04-arm
     if: ${{ github.event.repository.owner.id == github.event.sender.id }}
 
     steps:
@@ -106,7 +103,6 @@ jobs:
           sudo -E apt-get -y purge azure-cli ghc* zulu* llvm* firefox google* dotnet* powershell openjdk* mongodb* moby* || true
           sudo -E apt-get -y install $(curl -fsSL https://ophub.org/ubuntu2404-build-armbian-depends)
           sudo -E systemctl daemon-reload
-          #sudo -E apt-get -y full-upgrade
           sudo -E apt-get -y autoremove --purge
           sudo -E apt-get clean
           sudo sed -i '/NVM_DIR/d;/skel/d' /root/{.bashrc,.profile}
@@ -117,15 +113,6 @@ jobs:
           date -u
           timedatectl status || true
           echo "status=success" >> ${GITHUB_OUTPUT}
-
-      - name: Create swap space
-        run: |
-          sudo fallocate -l 16G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          echo "Swap created and enabled"
-          free -h
 
       - name: Create virtual disk for extended storage
         id: disk
@@ -150,50 +137,13 @@ jobs:
       - name: Get kernel source commit hash
         id: kernelhash
         run: |
-          # 解析 kernel_source，支持 owner/repo@branch 格式
-          source_input="${{ inputs.kernel_source }}"
-          
-          # 分离仓库和分支
-          if [[ "$source_input" == *"@"* ]]; then
-            repo_name="${source_input%@*}"
-            branch_name="${source_input#*@}"
-          else
-            repo_name="$source_input/linux-${{ inputs.kernel_version }}"
-            branch_name="${{ inputs.kernel_version }}"
-          fi
-          
-          echo "Repository: ${repo_name}"
-          echo "Branch: ${branch_name}"
-          
-          # 使用正确的 API 格式获取 commit hash
-          api_url="https://api.github.com/repos/${repo_name}/git/ref/heads/${branch_name}"
-          echo "API URL: ${api_url}"
-          
+          api_url="https://api.github.com/repos/imchina001-leo/linux-6.1.y/git/ref/heads/6.1.y"
           source_hash=$(curl -fsSL -m 20 \
               -H "Accept: application/vnd.github+json" \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              ${api_url} 2>/dev/null | jq -r '.object.sha')
-          
-          # 如果获取失败，尝试 main 分支
-          if [[ -z "${source_hash}" || "${source_hash}" == "null" ]]; then
-            echo "Branch ${branch_name} not found, trying main"
-            api_url="https://api.github.com/repos/${repo_name}/git/ref/heads/main"
-            source_hash=$(curl -fsSL -m 20 \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                ${api_url} 2>/dev/null | jq -r '.object.sha')
-          fi
-          
-          # 如果还失败，尝试 master
-          if [[ -z "${source_hash}" || "${source_hash}" == "null" ]]; then
-            echo "Still not found, trying master"
-            api_url="https://api.github.com/repos/${repo_name}/git/ref/heads/master"
-            source_hash=$(curl -fsSL -m 20 \
-                -H "Accept: application/vnd.github+json" \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                ${api_url} 2>/dev/null | jq -r '.object.sha')
-          fi
-          
+              ${api_url} |
+              jq -r '.object.sha'
+          )
           [[ -z "${source_hash}" || "${source_hash}" == "null" ]] && source_hash="${{ github.sha }}"
           echo "source_hash=${source_hash}" >> ${GITHUB_ENV}
           echo "status=success" >> ${GITHUB_OUTPUT}
@@ -205,23 +155,14 @@ jobs:
           key: kernel-${{ inputs.kernel_toolchain }}-${{ inputs.kernel_version }}-${{ env.source_hash }}
           restore-keys: |
             kernel-${{ inputs.kernel_toolchain }}-${{ inputs.kernel_version }}-
-      - name: 启动 armbian-ophub 容器
-        run: |
-          docker rm -f armbian-ophub || true
-          docker run -d --name armbian-ophub \
-            -v /builder:/builder \
-            -w /builder \
-            ophub/armbian-bookworm:amd64 \
-            tail -f /dev/null
+
       - name: Compile the kernel [ ${{ inputs.kernel_version }} ]
         uses: ophub/amlogic-s9xxx-armbian@main
         if: ${{ steps.disk.outputs.status == 'success' && !cancelled() }}
-        env:
-          MAKE_JOBS: 1
         with:
           build_target: kernel
-          kernel_source: ${{ inputs.kernel_source }}
-          kernel_version: ${{ inputs.kernel_version }}
+          kernel_source: imchina001-leo/linux-6.1.y
+          kernel_version: 6.1.y
           kernel_auto: ${{ inputs.kernel_auto }}
           delete_source: ${{ inputs.delete_source }}
           kernel_package: ${{ inputs.kernel_package }}
@@ -229,9 +170,7 @@ jobs:
           kernel_toolchain: ${{ inputs.kernel_toolchain }}
           ccache_clear: ${{ inputs.ccache_clear }}
           docker_hostpath: /builder
-          docker_image: ophub/armbian-bookworm:amd64
-          silent_log: false
-          enable_log: true
+          docker_image: ophub/armbian-${{ inputs.docker_image }}:arm64
 
       - name: Upload Kernel to Release
         uses: ncipollo/release-action@main
