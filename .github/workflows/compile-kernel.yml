@@ -211,7 +211,7 @@ jobs:
           docker run -d --name armbian-ophub \
             -v /builder:/builder \
             -w /builder \
-            ophub/armbian-bookworm:arm64 \
+            ophub/armbian-bookworm:amd64 \
             tail -f /dev/null
       - name: Compile the kernel [ ${{ inputs.kernel_version }} ]
         uses: ophub/amlogic-s9xxx-armbian@main
@@ -229,7 +229,7 @@ jobs:
           kernel_toolchain: ${{ inputs.kernel_toolchain }}
           ccache_clear: ${{ inputs.ccache_clear }}
           docker_hostpath: /builder
-          docker_image: ophub/armbian-bookworm:arm64
+          docker_image: ophub/armbian-bookworm:amd64
           silent_log: false
           enable_log: true
 
