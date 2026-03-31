@@ -205,7 +205,14 @@ jobs:
           key: kernel-${{ inputs.kernel_toolchain }}-${{ inputs.kernel_version }}-${{ env.source_hash }}
           restore-keys: |
             kernel-${{ inputs.kernel_toolchain }}-${{ inputs.kernel_version }}-
-
+      - name: 启动 armbian-ophub 容器
+        run: |
+          docker rm -f armbian-ophub || true
+          docker run -d --name armbian-ophub \
+            -v /builder:/builder \
+            -w /builder \
+            ophub/armbian-bookworm:arm64 \
+            tail -f /dev/null
       - name: Compile the kernel [ ${{ inputs.kernel_version }} ]
         uses: ophub/amlogic-s9xxx-armbian@main
         if: ${{ steps.disk.outputs.status == 'success' && !cancelled() }}
