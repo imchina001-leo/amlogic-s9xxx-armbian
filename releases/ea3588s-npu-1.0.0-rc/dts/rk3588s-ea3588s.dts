@@ -1,0 +1,227 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * iflytek EA3588S (RK3588S) — P2 起草版（staging，非最终产物）
+ *
+ * 基座：mainline v6.12 arch/arm64/boot/dts/rockchip/rk3588s.dtsi
+ *       （v6.12 起为薄壳：include rk3588-base.dtsi + rk3588-opp.dtsi；2026-10-27 实测）
+ * 参考源：/mnt/armbian-work/source/ea_3588s/kernel-5.10.226/ea3588s.dts（反编译产物，
+ *         仅作属性取值参考，不直接复制；phandle 均已手工解析为符号引用）
+ *
+ * GPIO phandle 解析记录（反编译 → 符号）：
+ *   0x14c = gpio@fd8a0000 = &gpio0 （主线 rk3588-base.dtsi L2853 同址确认）
+ *   0x110 = gpio@fec40000 = &gpio3 （主线 rk3588-base.dtsi L3297 同址确认）
+ *        【P8 勘误】P2 注释曾误写为 gpio@fec20000=&gpio1；工厂 DT 7443 行
+ *        phandle 0x110 = gpio@fec40000 = &gpio3（fec20000 是 gpio1 的地址）。
+ *        仅注释误差：本 DTS 实际属性只引用 0x14c/gpio0，未受影响。
+ *   pin 编号：0x00=A0 … 0x17=C7(23) … 0x1a=D2(26) … 0x1c=D4(28) … 0x1d=D5(29)
+ *
+ * 本文件尚未编译（P3 `make dtbs` 时验证）；dt-bindings 依赖：
+ *   <dt-bindings/gpio/gpio.h>, <dt-bindings/pinctrl/rockchip.h>
+ */
+
+/dts-v1/;
+
+#include "rk3588s.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/pinctrl/rockchip.h>
+
+/ {
+	model = "EA3588S";
+	compatible = "iflytek,rk3588s-aibox", "rockchip,rk3588";
+
+	/*
+	 * SDIO Wi-Fi 上电时序（Fn-Link 6252B-SRB = RTL8852BS）
+	 * src: ea3588s.dts L8632-8640 (sdio-pwrseq)
+	 *   compatible = "mmc-pwrseq-simple"   —— 主线标准驱动，ophub config-6.12
+	 *                                         已启用 CONFIG_PWRSEQ_SIMPLE=y
+	 *   reset-gpios  = <0x14c 0x17 0x01>   → <&gpio0 RK_PC7 GPIO_ACTIVE_LOW>
+	 *                                         (WIFI_REG_ON，低电平复位/保持，高电平使能)
+	 *   post-power-on-delay-ms = <0xc8>    → <200>
+	 *   vendor 侧另有 pinctrl-0 = <0x1bf>(sdmmc-pwren 组，把 GPIO0_C7 配为 GPIO 功能)；
+	 *   主线 mmc-pwrseq-simple 通过 gpiod 直接请求 GPIO，无需额外 pinctrl，故不迁移。
+	 */
+	sdio_pwrseq: sdio-pwrseq {
+		compatible = "mmc-pwrseq-simple";
+		reset-gpios = <&gpio0 RK_PC7 GPIO_ACTIVE_LOW>;
+		post-power-on-delay-ms = <200>;
+	};
+
+	/*
+	 * ========== 以下节点为 P4/P5 待定项，不启用 ==========
+	 * 以太网 GMAC / PHY（vendor 节点齐全，rgmii 延时与 PHY 型号需实机核对）
+	 * USB2/USB3、HDMI、音频、PMIC 与全部 regulator
+	 *   —— PMIC 型号未确认【尚待验证】：vendor 反编译树含完整供电定义，
+	 *      但不得假设为 rk806 直接照抄；P4 串口日志 + i2c 探测后回填。
+	 *   —— 最小启动集（eMMC + UART9 + SDIO Wi-Fi）不依赖这些节点。
+	 */
+};
+
+/*
+ * BT_REG_ON（GPIO0_D4，高有效）—— BT-A（rtk_hciattach）路线的供电接管。
+ * src: ea3588s.dts L8647 (BT,reset_gpio = <0x14c 0x1c 0x00>)
+ * 用 gpio-hog 在内核启动时拉高，替代 BSP bluetooth-platdata 驱动（主线无此驱动，不迁移节点）。
+ * 若 P5 改选 BT-B（serdev），删除本 hog，改为在 &uart9 下挂：
+ *   bluetooth { compatible = "realtek,rtl8852bs-bt";
+ *               enable-gpios = <&gpio0 RK_PD4 GPIO_ACTIVE_HIGH>; ... }
+ * （compatible 需内核小补丁，见 P1 报告 §6.2。）
+ */
+&gpio0 {
+	bt-reg-on-hog {
+		gpio-hog;
+		gpios = <RK_PD4 GPIO_ACTIVE_HIGH>;
+		output-high;
+		line-name = "bt-reg-on";
+	};
+};
+
+/*
+ * SDIO Wi-Fi 控制器：fe2c0000。
+ * 注意：主线标签为 &sdmmc（RK3588 上该控制器常规用途是 TF 卡），vendor 将其
+ * 整体配置为 SDIO Wi-Fi —— 以节点地址为准，标签名不影响硬件行为。
+ * src: ea3588s.dts L5397-5416 (mmc@fe2c0000, status okay)
+ *   no-sd; no-mmc; bus-width=<4>; disable-wp; cap-sd-highspeed; cap-sdio-irq;
+ *   keep-power-in-suspend; mmc-pwrseq; non-removable; sd-uhs-sdr104;
+ *   max-frequency=<0xbebc200>=200MHz（主线 base dtsi 默认值相同，不重复写）
+ * pinctrl：vendor 仅配 clk/cmd/bus4 三组（L7925-7935 = sdmmc-clk/cmd/bus4，
+ * 引脚 GPIO4_D5/D4/D0-D3，func1），未配 det —— 与 SDIO 场景一致，
+ * 故覆写主线默认的 4 组（去掉 &sdmmc_det，避免 det 引脚被挪作他用时冲突）。
+ */
+&sdmmc {
+	bus-width = <4>;
+	no-sd;
+	no-mmc;
+	non-removable;
+	cap-sdio-irq;
+	cap-sd-highspeed;
+	keep-power-in-suspend;
+	disable-wp;
+	mmc-pwrseq = <&sdio_pwrseq>;
+	pinctrl-0 = <&sdmmc_clk &sdmmc_cmd &sdmmc_bus4>;
+	status = "okay";
+};
+
+/*
+ * eMMC：fe2e0000（SDHCI 5.1）。
+ * src: ea3588s.dts L5435-5460 (mmc@fe2e0000, status okay)
+ *   bus-width=<8>; no-sdio; no-sd; non-removable; mmc-hs400-1_8v;
+ *   card-detect-delay=<0x4b0>=1200; max-frequency=200MHz（主线默认一致）
+ * 主线 base dtsi 已提供时钟/reset 定义；此处只补板级属性。
+ */
+&sdhci {
+	bus-width = <8>;
+	no-sdio;
+	no-sd;
+	non-removable;
+	mmc-hs400-1_8v;
+	card-detect-delay = <1200>;
+	status = "okay";
+};
+
+/*
+ * UART2（调试串口，feb50000）。
+ * src: ea3588s.dts L6463-6472 (status=disabled, pinctrl-0=uart2m1-xfer)
+ *      + L8793 bootargs earlycon=uart8250,mmio32,0xfeb50000
+ * P5-G 曾用 uart2m1_xfer，实机证实串口 RX 失效（见 P5G_UART_RX_Audit）。
+ * P5-H 修复：改回 uart2m0_xfer —— 板载调试排针 GPIO0_B5(TX)/GPIO0_B6(RX)，
+ * func 10，与原厂 fiq-debugger 及工厂实机 pinmux（dev_对照表 L427-428）一致。
+ * uart2m1_xfer 是 GPIO4_D0/D1，与 SDIO Wi-Fi 数据线（sdmmc_bus4）冲突，
+ * 不可作调试串口。本次修复即恢复调试串口 RX/TX 引脚复用。
+ * 注意：基树 rk3588-base.dtsi 默认 uart2m1_xfer，本行必须显式写 m0，不可删。
+ */
+&uart2 {
+	pinctrl-0 = <&uart2m0_xfer>;
+	status = "okay";
+};
+
+/*
+ * UART9（蓝牙 H5）：febc0000。
+ * src: ea3588s.dts serial@febc0000 (status okay, pinctrl-0=<0x171 0x172>)
+ * vendor 0x171/0x172 = uart9m2-xfer / uart9m2-ctsn（func 0x0a=10）；
+ * 引脚与主线 rk3588-base-pinctrl.dtsi L3378-3400 完全一致：
+ *   uart9m2_xfer  = GPIO3_D4(RX) + GPIO3_D5(TX)
+ *   uart9m2_ctsn  = GPIO3_D3
+ *   uart9m2_rtsn  = GPIO3_D2
+ * 主线 &uart9 默认 pinctrl-0 = <&uart9m1_xfer>（rk3588-base.dtsi L2311），必须覆写为 m2。
+ * vendor 另有 uart9m2-rtsn 组（0x1c0）但未放入 uart9 默认 pinctrl，而是交由 BSP
+ * bluetooth 驱动在 rts_gpio 状态间切换；其 `uart_rts_gpios=<0x110 0x1a 0x01>`
+ * 【P8 勘误】0x110=&gpio3、0x1a=26=RK_PD2 → 实为 GPIO3_D2（flag 0x01=ACTIVE_LOW），
+ * 与 uart9m2_rtsn(GPIO3_D2) 同脚一致——P2 曾因 0x110 误译成 GPIO1 而判为
+ * "BSP 模板残留"，勘误后修正为 RTS 脚本身；三组全配的处置不变。
+ * P2 采保守策略：三组全配（HW 流控交给 8250 核心）；若 P5 发现流控异常，
+ * 去掉 &uart9m2_rtsn 再试。
+ */
+&uart9 {
+	pinctrl-0 = <&uart9m2_xfer &uart9m2_ctsn &uart9m2_rtsn>;
+	status = "okay";
+};
+
+/*
+ * fe2d0000（主线 &sdio）：vendor status = "disabled"（ea3588s.dts L5421-5433）。
+ * 【尚待验证 / P4 关键发现】EA3588S 出厂 DTB 没有任何启用的 TF 卡节点，
+ * 也无 cd-gpios —— TF 卡槽是否物理存在、若存在接在哪个控制器（fe2d？）无法
+ * 从 DTS 判定。影响：P4“TF 卡首启”计划可能需要改为 RKDevTool Option 1 直刷 eMMC。
+ * P4 串口日志确认后再决定是否把本节点启用为 TF 卡（含 cd 引脚定义）。
+ */
+&sdio {
+	status = "disabled";
+};
+
+/*
+ * Wi-Fi/BT 其余 GPIO（仅记录，不建节点——主线侧无对应消费者，P5 按需启用）：
+ *   WIFI_WAKE_HOST  = GPIO0_A0（vendor WIFI,host_wake_irq = <0x14c 0x00 0x00>，L8659）
+ *   BT_WAKE(主→BT)  = GPIO3_B7【P8 勘误：0x110=&gpio3，P2 注释误写 GPIO1_B7】
+ *                     （vendor BT,wake_gpio = <0x110 0x0f 0x00>，L8649）
+ *   BT_HOST_WAKE    = GPIO0_D5（vendor BT,wake_host_irq = <0x14c 0x1d 0x00>，L8650）
+ * BSP 专有节点 wireless-wlan(wlan-platdata) / wireless-bluetooth(bluetooth-platdata)
+ * 不迁移（主线无驱动；wifi_chip_type="rtl8852bs" 对 OOT 驱动的 SDIO ID 探测非必需）。
+ */
+
+/*
+ * ============================================================
+ * P8/阶段C：板载 Realtek RTL8111H 千兆以太网（PCIe x1）
+ * （用户实物确认：板载 RJ45，芯片 Realtek RTL8111H —— PCIe GbE 控制器，
+ *  MAC+PHY 一体；不走 GMAC/RGMII。工厂 DT 无 RGMII PHY、mdio 空，与此一致。）
+ *
+ * 硬件依据（工厂 DT dump 5124d774 + ea3588s.dts 6026f671，非猜测）：
+ *   pcie@fe190000 status="okay"（fe180000 为 disabled，不用）
+ *     reset-gpios = <0x110 0x19 0x00>
+ *       → <&gpio3 RK_PD1 GPIO_ACTIVE_HIGH>
+ *       （0x110 = gpio@fec40000 = &gpio3，主线 rk3588-base.dtsi L3297 同址；
+ *        0x19 = 25 = RK_PD1；flag 0x00 = ACTIVE_HIGH）
+ *     pinctrl-0 = <0x10f> = "pcie2x1l2/pcie-reset"
+ *       rockchip,pins = <0x03 0x19 0x00 0x1a0>
+ *       = bank3 pin25 mux0(GPIO) + 0x1a0=pcfg-pull-none(bias-disable)
+ *       （主线 rockchip-pinconf.dtsi L18-20 pcfg_pull_none 完全一致）
+ *   phy@fee00000（0x10e = combphy0_ps，PCIe PIPE PHY）status="okay"
+ *   pcie2x1l2 主线节点 rk3588-base.dtsi L1978：phys=&combphy0_ps PHY_TYPE_PCIE、
+ *     max-link-speed=2、num-lanes=1，与工厂 DT 一致，无须改动。
+ *
+ * 驱动：CONFIG_R8168=m（vendor r8168，2026-11-03 实机 modprobe 实测可加载）。
+ *   主线 pcie-dw-rockchip.c L442 devm_gpiod_get_optional("reset",GPIOD_OUT_LOW)，
+ *   L258/L272 在 LTSSM 前/后断言与释放 PERST#，与工厂 ACTIVE_HIGH 极性匹配。
+ *
+ * GMAC（fe1c0000）保持 disabled：本板以太网走 PCIe，工厂 DT 亦为 disabled
+ * （无 PHY/MDIO 配置），不得启用。
+ * ============================================================
+ */
+
+&combphy0_ps {
+	status = "okay";
+};
+
+&pcie2x1l2 {
+	status = "okay";
+	pinctrl-names = "default";
+	pinctrl-0 = <&pcie2x1l2_reset>;
+	reset-gpios = <&gpio3 RK_PD1 GPIO_ACTIVE_HIGH>;
+};
+
+&pinctrl {
+	pcie2x1l2 {
+		pcie2x1l2_reset: pcie-reset {
+			rockchip,pins =
+				/* pcie2x1l2_perst_n: GPIO3_D1，mux0=GPIO */
+				<3 RK_PD1 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+};

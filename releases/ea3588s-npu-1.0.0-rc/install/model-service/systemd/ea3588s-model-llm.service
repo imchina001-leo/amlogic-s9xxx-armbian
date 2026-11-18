@@ -1,0 +1,15 @@
+# ea3588s-model-llm.service — M1L 语言模型按需短链推理（oneshot，≤16 token 纪律）
+# CMA 预算：~1,640.8MiB 权重（2GiB CMA 内独占运行；与 vision 互斥——modelctl flock 仲裁）
+[Unit]
+Description=EA3588S M1L LLM model inference (short-chain, exclusive)
+After=ea3588s-npu-verify.service
+ConditionPathExists=/dev/dri/renderD128
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rknpu-modelctl infer llm
+TimeoutStartSec=300
+Restart=no
+
+[Install]
+# 有意不设 WantedBy（阅卷程序/人工显式 start）

@@ -1,0 +1,76 @@
+--- patches/armbian_compile_kernel.sh.orig	2026-10-27 11:28:44.421629061 +0800
++++ compile-kernel/tools/script/armbian_compile_kernel.sh	2026-10-27 18:39:01.395931992 +0800
+@@ -321,8 +321,12 @@
+     echo -e "${STEPS} Checking the toolchain for kernel compilation..."
+ 
+     # Install dependencies
+-    sudo apt-get -qq update
+-    sudo apt-get -qq install -y $(cat compile-kernel/tools/script/armbian-compile-kernel-depends)
++    # [P3B-PATCH-3] Full dependency installation (~120 packages incl. clang/llvm/
++    # debootstrap/nfs-kernel-server) is disabled on this build workstation.
++    # The actually missing prerequisites for THIS kernel config (ccache for the
++    # script's CC= wrapper, dwarves/pahole for CONFIG_DEBUG_INFO_BTF=y) were
++    # installed separately before the run; before/after dpkg state is recorded
++    # in the P3-B report. Reference: compile-kernel/tools/script/armbian-compile-kernel-depends
+ 
+     echo -e "${INFO} Configuring Git for large file downloads..."
+     git config --global http.postBuffer 524288000
+@@ -615,6 +619,14 @@
+     [[ -s "${config_path}/config-${kernel_verpatch}" ]] || error_msg "Missing [ config-${kernel_verpatch} ] template!"
+     echo -e "${INFO} Copy [ ${config_path}/config-${kernel_verpatch} ] to [ .config ]"
+     cp -f ${config_path}/config-${kernel_verpatch} .config
++    # [P3B-PATCH-4] Re-assert the P3-A target driver symbol. The mandated
++    # -f/--configFlavor flag forces config_download=true, and the downloaded
++    # stock config overwrites tools/config/config-6.12, silently dropping the
++    # CONFIG_RTL8852BS=m line appended in P3-A. Build #1 evidence: final
++    # .config had "# CONFIG_RTL8852BS is not set" and the driver never
++    # compiled. Re-append before Kconfig syncconfig (idempotent; deps
++    # WLAN=y MMC=y CFG80211=m allow tristate m). Sandbox copy only.
++    grep -q "^CONFIG_RTL8852BS=m" .config || echo "CONFIG_RTL8852BS=m" >> .config
+     # Clear kernel signature
+     sed -i "s|CONFIG_LOCALVERSION=.*|CONFIG_LOCALVERSION=\"\"|" .config
+ 
+@@ -724,6 +736,31 @@
+ }
+ 
+ generate_uinitrd() {
++    # [P3B-PATCH-2] HOST-SAFE STUB (isolated x86_64 build copy only).
++    # Original body installs the freshly built kernel into the CURRENT system:
++    #   - mv /boot/* to /ddbr/tmp/boot, then writes new /boot files
++    #   - mv /usr/lib/modules/$(uname -r) to /ddbr/tmp/modules, then copies modules in
++    #   - rewrites /etc/initramfs-tools/initramfs.conf and runs update-initramfs
++    # On a build workstation that is destructive if the run aborts mid-way (no restore).
++    # This stub only assembles ${output_path}/boot for the boot tarball/deb;
++    # uInitrd/initrd.img generation is deferred to P4 (target device or chroot).
++    # It does NOT touch host /boot, /usr/lib/modules, /etc/initramfs-tools or /ddbr.
++    cd ${current_path}
++    echo -e "${STEPS} [P3B-PATCH-2] Host-safe mode: assembling [ ${output_path}/boot ] (uInitrd deferred to P4)..."
++    [[ -n "${output_path}" && "${output_path}" == */compile-kernel/output ]] || error_msg "[P3B-PATCH-2] Unexpected output_path [ ${output_path} ], refusing to touch boot staging."
++    [[ -f "${kernel_path}/${local_kernel_path}/arch/${SRC_ARCH}/boot/Image" ]] || error_msg "[P3B-PATCH-2] Kernel Image not found."
++    rm -rf ${output_path}/boot
++    mkdir -p ${output_path}/boot
++    cp -f ${kernel_path}/${local_kernel_path}/System.map ${output_path}/boot/System.map-${kernel_outname}
++    cp -f ${kernel_path}/${local_kernel_path}/.config ${output_path}/boot/config-${kernel_outname}
++    cp -f ${kernel_path}/${local_kernel_path}/arch/${SRC_ARCH}/boot/Image ${output_path}/boot/vmlinuz-${kernel_outname}
++    # rockchip/allwinner branch of the original flow (PLATFORM empty on build host):
++    cp -f ${output_path}/boot/vmlinuz-${kernel_outname} ${output_path}/boot/Image
++    echo -e "${INFO} [P3B-PATCH-2] Boot staging files: $(ls ${output_path}/boot 2>/dev/null | tr '\n' ' ')"
++    return 0
++}
++
++generate_uinitrd_original_disabled() {
+     cd ${current_path}
+     echo -e "${STEPS} Initializing uInitrd generation environment..."
+ 
+@@ -1545,7 +1582,10 @@
+ 
+ # Check script permission, supports running on Armbian system.
+ [[ "$(id -u)" == "0" ]] || error_msg "Please run this script as root: [ sudo ./${0} ]"
+-[[ "${arch_info}" == "aarch64" ]] || error_msg "The script only supports running under Armbian system."
++# [P3B-PATCH-1] Isolated x86_64 cross-compile copy: also allow x86_64 host.
++# Target kernel stays arm64 (SRC_ARCH=arm64 + aarch64 cross toolchain untouched);
++# no other environment check is bypassed. See EA3588S_Ophub_P3B_KernelBuild.md.
++[[ "${arch_info}" == "aarch64" || "${arch_info}" == "x86_64" ]] || error_msg "The script only supports running under Armbian system."
+ 
+ # Initialize variables
+ init_var "${@}"

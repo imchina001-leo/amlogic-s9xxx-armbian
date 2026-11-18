@@ -1,0 +1,15 @@
+# ea3588s-npu-verify.service — NPU 就绪判定（oneshot，零模型逻辑）
+# 依赖：P2 W1-W8 部署（modules-load.d 自动加载 rknpu）之后
+# 失败语义：npu 未就绪仅本单元 failed/skipped，不影响系统进入桌面与网络
+[Unit]
+Description=EA3588S NPU readiness verification (renderD128 + module Live)
+After=systemd-modules-load.service
+ConditionPathExists=/dev/dri/renderD128
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rknpu-modelctl verify
+RemainAfterExit=yes
+
+[Install]
+# 有意不设 WantedBy（按需/上层编排启动，非开机自启）

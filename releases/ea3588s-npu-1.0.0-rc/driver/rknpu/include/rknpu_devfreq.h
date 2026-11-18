@@ -1,0 +1,54 @@
+/* SPDX-License-Identifier: GPL-2.0 */
+/*
+ * Copyright (C) Rockchip Electronics Co., Ltd.
+ * Author: Finley Xiao <finley.xiao@rock-chips.com>
+ */
+
+#ifndef __LINUX_RKNPU_DEVFREQ_H
+#define __LINUX_RKNPU_DEVFREQ_H
+
+/*
+ * Mainline port: gate on a driver-local symbol that is never defined in an
+ * out-of-tree build, so the static inline stubs below are always used
+ * (rknpu_devfreq.c is vendor-API-bound and not compiled).  Stubs return 0:
+ * devfreq init failure must not abort probe, and the devfreq
+ * suspend/resume hooks only do DVFS clock tweaks - real power gating
+ * happens in rknpu_power_on/off().
+ */
+#if defined(CONFIG_PM_DEVFREQ) && defined(CONFIG_ROCKCHIP_RKNPU_DEVFREQ)
+void rknpu_devfreq_lock(struct rknpu_device *rknpu_dev);
+void rknpu_devfreq_unlock(struct rknpu_device *rknpu_dev);
+int rknpu_devfreq_init(struct rknpu_device *rknpu_dev);
+void rknpu_devfreq_remove(struct rknpu_device *rknpu_dev);
+int rknpu_devfreq_runtime_suspend(struct device *dev);
+int rknpu_devfreq_runtime_resume(struct device *dev);
+#else
+static inline int rknpu_devfreq_init(struct rknpu_device *rknpu_dev)
+{
+	return 0;
+}
+
+static inline void rknpu_devfreq_remove(struct rknpu_device *rknpu_dev)
+{
+}
+
+static inline void rknpu_devfreq_lock(struct rknpu_device *rknpu_dev)
+{
+}
+
+static inline void rknpu_devfreq_unlock(struct rknpu_device *rknpu_dev)
+{
+}
+
+static inline int rknpu_devfreq_runtime_suspend(struct device *dev)
+{
+	return 0;
+}
+
+static inline int rknpu_devfreq_runtime_resume(struct device *dev)
+{
+	return 0;
+}
+#endif /* CONFIG_PM_DEVFREQ && CONFIG_ROCKCHIP_RKNPU_DEVFREQ */
+
+#endif /* __LINUX_RKNPU_DEVFREQ_H_ */

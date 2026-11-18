@@ -1,0 +1,8 @@
+*.o
+.*.cmd
+rknpu.ko
+rknpu.mod
+rknpu.mod.c
+.module-common.o
+Module.symvers
+modules.order

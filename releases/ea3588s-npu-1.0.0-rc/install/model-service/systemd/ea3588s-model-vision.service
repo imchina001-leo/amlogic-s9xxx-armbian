@@ -1,0 +1,15 @@
+# ea3588s-model-vision.service — M1V 视觉模型按需推理（oneshot）
+# CMA 预算：~808MiB 权重（2GiB CMA 内独占运行；与 llm 互斥——modelctl flock 仲裁）
+[Unit]
+Description=EA3588S M1V vision model inference (probe-grade, exclusive)
+After=ea3588s-npu-verify.service
+ConditionPathExists=/dev/dri/renderD128
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/rknpu-modelctl infer vision
+TimeoutStartSec=120
+Restart=no
+
+[Install]
+# 有意不设 WantedBy（阅卷程序/人工显式 start）
