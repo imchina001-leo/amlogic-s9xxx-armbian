@@ -33,14 +33,20 @@ label l1                ← NPU 生产项
 
 ## 人工恢复路径（l0）
 
-1. 开机 30s 菜单窗口内（串口/键盘）选择 `l0`；
-2. 或挂载 p2 后还原备份：`mount /dev/mmcblk0p2 /mnt/p2 && cp /mnt/p2/extlinux.conf.bak-persistent-* /mnt/p2/extlinux.conf`
+1. 开机 30s 菜单窗口内（串口/键盘）选择 `l0` ——立即生效，无需写入；
+2. 或挂载 p2 后还原备份（**根目录份与 extlinux/ 目录份两份都要还原**，缺一不生效）：
+   ```bash
+   mount /dev/mmcblk0p2 /mnt/p2
+   cp /mnt/p2/extlinux.conf.bak-persistent-20261118T0900Z /mnt/p2/extlinux.conf
+   cp /mnt/p2/extlinux/extlinux.conf.bak-persistent-20261118T0845Z /mnt/p2/extlinux/extlinux.conf
+   umount /mnt/p2
+   ```
 
 ## 回滚锚点（三层）
 
-- p2 内就地备份：`extlinux.conf.bak-persistent-20261118T0845Z` / `-20261118T0900Z`（SHA `35170c8d…` = 原始件）
+- p2 内就地备份：`extlinux.conf.bak-persistent-20261118T0845Z` / `-20261118T0900Z`（SHA `35170c8d…` = 原始件，双份各一）
 - 板端 `/var/backups/ea3588s-persistent-npu/20261118T0900Z/extlinux/extlinux.conf`
-- 仓库 `build/p2-boot-ea3588s-npu-1.0.0-rc1.img`（β1 镜像，default l0 版）
+- 历史构建件：POST-G6 工作区 `build/p2-boot-ea3588s-npu-1.0.0-rc1.img`（β1 镜像，default l0 版；属构建产物备份，不在 git 树内）
 
 ## 未做 / 禁止项
 
